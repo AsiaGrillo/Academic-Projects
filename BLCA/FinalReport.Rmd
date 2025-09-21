@@ -1,0 +1,829 @@
+---
+title: "Bayesian Modelling Project"
+subtitle: "Asia Grillo ID: 5409650, Matteo Cristina ID: "
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+header-includes:
+  - \usepackage{float}
+  - \usepackage{booktabs}
+  - \usepackage{tikz}
+  - \usetikzlibrary{bayesnet}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+df = read.csv("subset.csv")
+library(ggplot2)
+library(vcd)
+library(dplyr)
+library(gridExtra)
+library(patchwork)
+library(Rmixmod)
+library(RColorBrewer)
+library(coda)
+library(tidyr)
+library(MCMCpack)
+library(pander)
+```
+
+# 1) Dataset
+## 1.1) Description
+The dataset employed in this analysis originates from a real-world small telecommunications company operating through a physical retail network. The original dataset comprises approximately **20,000 observations**, corresponding to all sales transactions recorded throughout the year **2024**. Each row represents a single sale made by an employee in one of the company's stores and includes information about the type of service sold and contextual characteristics of the transaction.  
+To enhance the interpretability and computational feasibility of the **Bayesian Latent Class Model**, the dataset was preprocessed and transformed into a structured set of **categorical variables**. A **stratified sampling** procedure was applied to extract a representative subset of **1000 observations**, using the variable \texttt{Shop} as the stratification baseline to preserve proportional representation across the company’s five stores.  
+
+\begin{table}[H]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Variable} & \textbf{Description} \\
+\midrule
+\texttt{Business} & Whether the customer is a business entity (\texttt{Yes}, \texttt{No}) \\
+\texttt{Upfront} & Whether an upfront payment was made at the time of sale (\texttt{Yes}, \texttt{No}) \\
+\texttt{Shop} & Identifier of the store where the sale occurred (\texttt{Shop01}–\texttt{Shop05}) \\
+\texttt{Service} & Type of service sold in the transaction\\
+& \hspace{1em} (\texttt{Sim}, \texttt{Phone}, \texttt{Recharge}, \texttt{Extra}, \texttt{Router}) \\
+\texttt{Customer} & Customer type based on purchase history\\
+& \hspace{1em} (\texttt{New}, \texttt{Frequent}, \texttt{Known}, \texttt{Recurring}) \\
+\texttt{Quarter} & Calendar quarter in which the transaction was made (\texttt{Q1}, \texttt{Q2}, \texttt{Q3}) \\
+\bottomrule
+\end{tabular}
+\caption{Description of the categorical variables}
+\end{table}
+
+All variables were selected for their potential to uncover latent behavioral profiles and patterns within the company's sales process. The categorical encoding facilitates the implementation of a probabilistic model based on discrete latent clusters, allowing for a nuanced interpretation of sales dynamics.
+
+## 1.2) Exploratory Analysis
+To gain an initial understanding of the structure of the dataset, we provide below a series of bar plots for each categorical variable. These plots display the counts of observations falling into each category, allowing us to visually inspect the prevalence of different levels across variables.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, fig.width=10, fig.height=5, fig.cap = "Bar plots of categorical variables"}
+my_blue_red <- scale_fill_gradient(low = "#fee5d9", high = "#a50f15")
+my_blue_palette <- scale_fill_gradient(low = "#eff3ff", high = "#2171b5")
+var_names <- names(df)
+p1 <- ggplot(df, aes_string(x = var_names[1], fill = "..count..")) +
+  geom_bar(color = "grey40") +
+  my_blue_red +
+  labs(title = NULL, x = var_names[1], y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+p2 <- ggplot(df, aes_string(x = var_names[2], fill = "..count..")) +
+  geom_bar(color = "grey40") +
+  my_blue_red +
+  labs(title = NULL, x = var_names[2], y = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+p3 <- ggplot(df, aes_string(x = var_names[3], fill = "..count..")) +
+  geom_bar(color = "grey40") +
+  my_blue_red +
+  labs(title = NULL, x = var_names[3], y = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+p4 <- ggplot(df, aes_string(x = var_names[4], fill = "..count..")) +
+  geom_bar(color = "grey40") +
+  my_blue_red +
+  labs(title = NULL, x = var_names[4], y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+p5 <- ggplot(df, aes_string(x = var_names[5], fill = "..count..")) +
+  geom_bar(color = "grey40") +
+  my_blue_red +
+  labs(title = NULL, x = var_names[5], y = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+p6 <- ggplot(df, aes_string(x = var_names[6], fill = "..count..")) +
+  geom_bar(color = "grey40") +
+  my_blue_red +
+  labs(title = NULL, x = var_names[6], y = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+combined_plot <- (p1 | p2 | p3) /
+                 (p4 | p5 | p6)
+print(combined_plot)
+```
+
+# 2) Bayesian Latent Class Model
+## 2.1) Graphical Representation with DAG
+The Bayesian Latent Class Model (BLCA) can be regarded as a specific instance of a categorical Bayesian network with a known and fixed DAG structure. In classical Directed Acyclic Graphs (DAGs), the nodes represent variables and the edges encode the conditional dependencies between them. The DAG structure allows for a factorization of the joint distribution according to parent-child relationships, facilitating the identification of conditional independencies.
+
+In the Latent Class Model, the data-generating process is assumed to be driven by an **unobserved (latent) variable** \( z_n \), which classifies each observation into one of \( K \) latent groups. The observed categorical responses \( \mathbf{X}_n = (X_{n1}, \ldots, X_{nP}) \) are then generated conditionally independently given the cluster assignment.
+
+To accommodate this, the DAG structure is simple yet expressive:
+\[
+\boldsymbol{\pi} \rightarrow z_n \rightarrow \mathbf{X}_n \leftarrow \boldsymbol{\phi}
+\]
+
+where: \( \boldsymbol{\pi} \) denotes the vector of cluster probabilities, \( z_n \) is the latent cluster label for observation \( n \) and \( \boldsymbol{\phi}_{k,d} \) denotes the class- and variable-specific categorical response probabilities.
+
+From this structure, we derive that the observed variables \( X_{n1}, \ldots, X_{nP} \) are conditionally independent given \( z_n \):
+\[
+X_{n1} \perp X_{n2} \perp \cdots \perp X_{nP} \mid z_n
+\]
+
+Moreover, the parameters $\boldsymbol{\pi}$ and $\boldsymbol{\phi}$ are assumed to be **a priori independent**, allowing for separate posterior updates conditional on the latent allocations $\mathbf{z}$:
+\[
+\boldsymbol{\pi} \perp \boldsymbol{\phi}
+\]
+
+## 2.2) Model Specification
+The generative model assumes the following probabilistic structure:
+\[
+X_{nd} \mid z_n = k, \boldsymbol{\phi}  \sim \text{Categorical}(\boldsymbol{\phi}_{k,d}) \quad \text{with} \quad \boldsymbol{\phi}_{k,d} = (\phi_{k,d,1}, \ldots, \phi_{k,d,V_d})
+\]
+\[
+z_n \mid \boldsymbol{\pi} \sim \text{Categorical}(\boldsymbol{\pi}) \quad \text{with} \quad \boldsymbol{\pi} = (\pi_1, \ldots, \pi_K), \quad \sum_{k=1}^K \pi_k = 1
+\]
+
+Given this structure, the complete-data likelihood — i.e., the joint distribution of the observed data \( \mathbf{X} \) and the latent variables \( \mathbf{z} \), conditional on \( \boldsymbol{\pi} \) and \( \boldsymbol{\phi} \) — factorizes as:
+\[
+\begin{aligned}
+p(\mathbf{X}, \mathbf{z} \mid \boldsymbol{\pi}, \boldsymbol{\phi}) 
+&= p(\mathbf{X} \mid \mathbf{z}, \boldsymbol{\phi}) \cdot p(\mathbf{z} \mid \boldsymbol{\pi}) \\
+&= \prod_{n=1}^N \pi_{z_n} \prod_{d=1}^P \phi_{z_n, d, X_{nd}} \\
+&= \prod_{k=1}^K \pi_k^{N_k} \prod_{d=1}^P \prod_{v=1}^{V_d} \phi_{k,d,v}^{N_{kdv}}
+\end{aligned}
+\]
+
+## 2.3) Joint prior
+We place semiconjugate Dirichlet priors on the parameters of the model:
+\[
+\boldsymbol{\pi} \sim \text{Dir}(\alpha_1, \ldots, \alpha_K) \quad \Longrightarrow \quad
+p(\boldsymbol{\pi}) = \frac{1}{B(\boldsymbol{\alpha})} \prod_{k=1}^{K} \pi_k^{\alpha_k - 1}
+\]
+\[
+\boldsymbol{\phi}_{k,d} \sim \text{Dir}(\beta_{d1}, \ldots, \beta_{d V_d})  \quad \Longrightarrow \quad
+p(\boldsymbol{\phi}_{k,d}) = \frac{1}{B(\boldsymbol{\beta}_d)} \prod_{v=1}^{V_d} \phi_{k,d,v}^{\beta_{d v} - 1}
+\]
+
+Where: \( B(\boldsymbol{\alpha}) = \frac{\prod_{k=1}^{K} \Gamma(\alpha_k)}{\Gamma\left( \sum_{k=1}^{K} \alpha_k \right)} \) and \( B(\boldsymbol{\beta}_d) = \frac{\prod_{v=1}^{V_d} \Gamma(\beta_{dv})}{\Gamma\left( \sum_{v=1}^{V_d} \beta_{dv} \right)} \) are multivariate Beta functions.
+
+Since \( \boldsymbol{\pi} \) and all \( \boldsymbol{\phi}_{k,d} \) are assumed to be independent a priori, the joint prior becomes:
+\[
+\begin{alignedat}{2}
+p(\boldsymbol{\pi}, \boldsymbol{\phi}) 
+&= p(\boldsymbol{\pi}) \cdot p(\boldsymbol{\phi}) 
+&&= p(\boldsymbol{\pi}) \cdot \prod_{k=1}^{K} \prod_{d=1}^{P} p(\boldsymbol{\phi}_{k,d}) \\
+&&&= \left[ \frac{1}{B(\boldsymbol{\alpha})} \prod_{k=1}^{K} \pi_k^{\alpha_k - 1} \right] 
+   \cdot \prod_{k=1}^{K} \prod_{d=1}^{P} 
+   \left[ \frac{1}{B(\boldsymbol{\beta}_d)} \prod_{v=1}^{V_d} \phi_{k,d,v}^{\beta_{dv} - 1} \right]
+\end{alignedat}
+\]
+
+In our model, we adopt a **noninformative prior** for the categorical parameters \( \boldsymbol{\pi} \) and \( \boldsymbol{\phi} \), following the **Jeffreys prior** approach. 
+Jeffreys prior for a categorical distribution with \( K \) categories corresponds to a Dirichlet distribution with parameter \( \alpha_k = \frac{1}{2} \) for all \( k \). Hence:
+\[
+\boldsymbol{\pi} \sim \text{Dir}\left(\frac{1}{2}, \ldots, \frac{1}{2} \right)
+\quad \text{and} \quad
+\boldsymbol{\phi}_{k,d} \sim \text{Dir}\left(\frac{1}{2}, \ldots, \frac{1}{2} \right)
+\]
+
+The choice \( \alpha_k = \frac{1}{2} \) ensures invariance under reparameterization and is derived by computing the **Fisher information**.
+
+We can show the derivation for the categorical case starts from the Fisher information matrix:
+  \[
+  \mathcal{I}_{ij} = \mathbb{E} \left[ \frac{\partial \log p(x)}{\partial p_i} \cdot \frac{\partial \log p(x)}{\partial p_j} \right]
+  \]
+
+The Jeffreys prior is proportional to the square root of the determinant of the Fisher information matrix:
+\[
+p(\boldsymbol{p}) \propto \sqrt{ \det(\mathcal{I}(\boldsymbol{p})) } \propto \prod_{k=1}^K p_k^{-1/2}
+\]
+
+which corresponds to the kernel of a Dirichlet distribution with all parameters equal to \( \frac{1}{2} \). In our model, the components \( p_k \) represent either cluster probabilities \( \pi_k \) or the category-specific probabilities \( \phi_{k,d,v} \) for variable \( d \) in cluster \( k \).
+
+## 2.4) Joint Posterior
+The joint posterior distribution is proportional to the complete-data likelihood times the joint prior:
+\begin{align*}
+p(\boldsymbol{\Pi}, \boldsymbol{\phi}, \mathbf{z} \mid \mathbf{X}) 
+&\propto p(\mathbf{X}, \mathbf{z} \mid \boldsymbol{\Pi}, \boldsymbol{\phi}) \cdot p(\boldsymbol{\Pi}) \cdot p(\boldsymbol{\phi}) \\
+&\propto 
+\left[ \prod_{k=1}^{K} \pi_k^{N_k} \right]
+\left[ \prod_{k=1}^{K} \prod_{d=1}^{P} \prod_{v=1}^{V_d} \phi_{k d v}^{N_{k d v}} \right]
+\left[ \prod_{k=1}^{K} \pi_k^{\alpha_k - 1} \right]
+\left[ \prod_{k=1}^{K} \prod_{d=1}^{P} \prod_{v=1}^{V_d} \phi_{k d v}^{\beta_{d v} - 1} \right] \\
+&\propto 
+\left[ \prod_{k=1}^{K} \pi_k^{N_k + \alpha_k - 1} \right]
+\left[ \prod_{k=1}^{K} \prod_{d=1}^{P} \prod_{v=1}^{V_d} \phi_{k d v}^{N_{k d v} + \beta_{d v} - 1} \right]
+\end{align*}
+
+## 2.5) Full Conditional Distributions
+### Full Conditional of \( \boldsymbol{\pi} \)
+Due to the conjugacy between the Categorical likelihood and the Dirichlet prior, the full conditional distribution of \( \boldsymbol{\pi} \) given the latent allocations \( \mathbf{z} \) is:
+\[
+p(\boldsymbol{\pi} \mid \mathbf{z}) \propto \prod_{n=1}^{N} \pi_{z_n} \cdot p(\boldsymbol{\pi}) \propto \prod_{k=1}^{K} \pi_k^{N_k} \cdot \prod_{k=1}^{K} \pi_k^{\alpha_k - 1} \propto \prod_{k=1}^{K} \pi_k^{N_k + \alpha_k - 1}
+\]
+
+which is the kernel of a Dirichlet distribution with updated parameters:
+\[
+\boldsymbol{\pi} \mid \mathbf{z} \sim \text{Dir}(\alpha_1 + N_1, \ldots, \alpha_K + N_K)
+\]
+
+```{r}
+full_cond_pi <- function(z, alpha) {
+  K <- length(alpha)
+  N_k <- tabulate(z, nbins = K)  # observation count for each class
+  return(rdirichlet(1, alpha + N_k)) # returns a vector of dimension K
+}
+```
+
+
+### Full Conditional of \( \boldsymbol{\phi}_{k,d} \)
+For each latent cluster \( k \) and variable \( d \), the full conditional distribution of \( \boldsymbol{\phi}_{k,d} \) is obtained by combining the cluster-conditional likelihood and the Dirichlet prior:
+\[
+p(\boldsymbol{\phi}_{k,d} \mid \mathbf{z}, \mathbf{X}) \propto \left[ \prod_{v=1}^{V_d} \phi_{k d v}^{\beta_{d v} - 1} \right] \left[ \prod_{n : z_n = k} \phi_{k d, x_{n d}} \right] \propto \prod_{v=1}^{V_d} \phi_{k d v}^{\beta_{d v} - 1 + N_{k d v}}
+\]
+
+which corresponds to a Dirichlet distribution with updated parameters:
+\[
+\boldsymbol{\phi}_{k,d} \mid \mathbf{z}, \mathbf{X} \sim \text{Dir}(\beta_{d1} + N_{k d 1}, \ldots, \beta_{d V_d} + N_{k d V_d})
+\]
+
+```{r}
+full_cond_phi <- function(X, z, beta_list, K, V) {
+  P <- ncol(X)
+  phi <- vector("list", K)
+  for (k in 1:K) {
+    phi_k <- list() # distributions of variables in class k
+    for (d in 1:P) {
+      v_d <- V[d] # number of categories for variable d
+      x_kd <- X[z == k, d] # values of the variable d in class k
+      counts <- tabulate(x_kd, nbins = v_d) # observed frequencies per level
+      beta_d <- beta_list[[d]]
+      phi_k[[d]] <- rdirichlet(1, counts + beta_d)
+    }
+    phi[[k]] <- phi_k
+  }
+  return(phi) # K x P list with dimension vectors V_d
+}
+```
+
+### Full Conditional of \( z_n \)
+For each observation \( n = 1, \ldots, N \), the full conditional distribution of the latent cluster assignment \( z_n \) is given by:
+\[
+\Pr(z_n = k \mid \mathbf{X}_n, \boldsymbol{\Pi}, \boldsymbol{\phi}) = \frac{ \pi_k \prod_{d=1}^{P} \phi_{k, d, X_{n d}} }{ \sum_{j=1}^{K} \pi_j \prod_{d=1}^{P} \phi_{j, d, X_{n d}} } \propto \pi_k \prod_{d=1}^{P} \phi_{k, d, X_{n d}}
+\]
+
+It corresponds to the posterior probability of cluster \( k \), obtained by updating the prior \( \pi_k \) with the **likelihood** of observing the profile \( \mathbf{X}_n \) under class-specific parameters \( \boldsymbol{\phi}_k \).
+
+```{r}
+full_cond_z <- function(X, pi, phi, K) {
+  N <- nrow(X)
+  P <- ncol(X)
+  z_new <- integer(N)
+  for (n in 1:N) {
+    probs <- numeric(K)  
+    for (k in 1:K) {
+      p_k <- pi[k] # initialize with the prior π_k
+      for (d in 1:P) {
+        v <- X[n, d] # observed value for the variable d in obs n
+        p_k <- p_k * phi[[k]][[d]][v] # joint probability
+      }
+      probs[k] <- p_k 
+    }
+    probs <- probs / sum(probs) # normalization
+    z_new[n] <- sample(1:K, size = 1, prob = probs)
+  }
+  return(z_new)
+}
+```
+
+# 2.6) Notation 
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Symbol} & \textbf{Definition} & \textbf{Description} \\
+\midrule
+$N$ &  & Number of observations (i.e., sales transactions) \\
+$P$ &  & Number of categorical variables \\
+$V_p$ &  & Number of categories for variable $p$ \\
+$K$ &  & Number of latent clusters \\
+$X_{np}$ &  & Observed value of variable $p$ for observation $n$ \\
+$z_n$ & $z_n \in \{1, \ldots, K\}$ & Latent cluster assignment for observation $n$ \\
+$\pi_k$ & $\Pr(z_n = k)$ & Prior probability of belonging to cluster $k$ \\
+$\phi_{kpv}$ & $\Pr(X_{np} = v \mid z_n = k)$ & Probability that variable $p$ takes value $v$ in cluster $k$ \\
+$N_k$ & $\sum_{n=1}^N \mathbb{1}(z_n = k)$ & Number of observations assigned to cluster $k$ \\
+$N_{kpv}$ & $\sum_{n=1}^N \mathbb{1}(z_n = k, X_{np} = v)$ & Number of times category $v$ of variable $p$ is observed in cluster $k$ \\
+\bottomrule
+\end{tabular}
+\caption{Notation and definitions used in the Bayesian Latent Class Model}
+\end{table}
+
+# 3) Model Selection
+Choosing the **number of latent clusters \( K \)** is a crucial step in the specification of Latent Class Models. The selected value of \( K \) directly determines the complexity and interpretability of the model, as well as its ability to capture the heterogeneity in the data.
+
+From a **Bayesian perspective**, several sophisticated approaches have been proposed in the literature to estimate \( K \). These include placing a prior distribution over \( K \), such as the Beta Negative Binomial distribution. While such methods offer principled solutions that integrate model uncertainty, they often come at the cost of increased computational and modelling complexity.
+
+To avoid these additional complications, we adopt a **frequentist approach** to model selection. A customary strategy in latent cluster modelling is to select the number of clusters using **information criteria**, which balance model fit and parsimony.
+
+Specifically, we evaluate two widely used criteria:
+\begin{itemize}
+\item Bayesian Information Criterion: $\text{BIC} = -2 \cdot \log \hat{L} + \nu \cdot \log(N)$;
+\item Integrated Completed Likelihood: $\text{ICL} = \text{BIC} - 2 \cdot \mathbb{E}_{\hat{\theta}} \left[ \log p(\mathbf{z} \mid \mathbf{X}, \hat{\theta}) \right]$.
+\end{itemize}
+These criteria are computed via the Expectation-Maximization (EM) algorithm applied to the Latent Class Model. The figure below displays the values of BIC and ICL across different values of \( K \) and the optimal number of clusters is selected as the one minimizing these indices. Models yielding smaller values of the information criteria are generally preferred, as they indicate a better trade-off between goodness of fit and model complexity. 
+
+In our case, since we are dealing with a model that includes **latent variables**, we place particular emphasis on the **Integrated Completed Likelihood (ICL)** criterion, which accounts not only for the fit, but also for the uncertainty in cluster membership. Based on the values of BIC and ICL obtained from the EM algorithm, we selected a model with **3 clusters**, as it minimizes the ICL.
+
+
+```{r, echo = FALSE, fig.width=8, fig.height=3, fig.pos = 'H'}
+df$Business = as.factor(df$Business)
+df$Shop = as.factor(df$Shop)
+df$Upfront = as.factor(df$Upfront)
+df$Service = as.factor(df$Service)
+df$Customer = as.factor(df$Customer)
+df$Quarter = as.factor(df$Quarter)
+nb = 2:30
+set.seed(44)
+xem <- mixmodCluster(df, nbCluster = nb, 
+                     criterion = c("BIC","ICL","NEC"),
+                     model=mixmodMultinomialModel(listModels="Binary_pk_Ekj"),
+                     seed = 182)
+nbC = NULL
+criteria = matrix(NA,length(nb),3)
+colnames(criteria) = xem@criterion
+for(i in 1:length(nb)){
+  criteria[i,] = xem@results[[i]]@criterionValue
+  nbC[i] = xem@results[[i]]@nbCluster
+}
+criteria = criteria[order(nbC),]
+par(mfrow=c(1, 2), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0))
+for(j in 1:2){
+  plot(nb,criteria[,j],ylab=colnames(criteria)[j], type="b",
+       xlab="k",cex.axis=0.8,axes=F)
+  axis(1,seq(min(nb),max(nb),1))
+  axis(2);  box()
+  abline(v = 3, lty = 2, col = "#a50f15")
+}
+par(mfrow=c(1, 1))
+```
+\begin{center}
+Figure 2: Model Selection via Information Criteria
+\end{center}
+
+# 4) Gibbs Sampler
+The Gibbs sampler iteratively updates each parameter by drawing from its conditional distribution given the current values of all the others. In our Latent Class Model, the vector of unknowns is $\boldsymbol{\theta} = (\boldsymbol{\pi}, \boldsymbol{\phi}, \mathbf{z})$ and the algorithm proceeds by alternately sampling from the full conditionals as follow:
+
+Start from the initial value $\boldsymbol{\theta}^{(0)} = \left( \boldsymbol{\pi}^{(0)}, \boldsymbol{\phi}^{(0)}, \mathbf{z}^{(0)} \right)$.  
+
+For each iteration \( s = 1, \ldots, S \), repeat the following steps:
+
+1. Draw \( \boldsymbol{\pi}^{(s)} \sim p(\boldsymbol{\pi} \mid \mathbf{z}^{(s-1)}) \)
+
+2. For each cluster \( k = 1, \ldots, K \) and each variable \( d = 1, \ldots, P \): 
+
+   2.1 Draw \( \boldsymbol{\phi}_{k,d}^{(s)} \sim p(\boldsymbol{\phi}_{k,d} \mid \mathbf{z}^{(s-1)}, \mathbf{X}) \)
+
+3. For each observation \( n = 1, \ldots, N \):  
+
+   3.1 Compute \( \Pr(z_n = k \mid \mathbf{X}_n, \boldsymbol{\pi}^{(s)}, \boldsymbol{\phi}^{(s)}) \)  
+   3.2 Draw \( z_n^{(s)} \sim \text{Categorical}(\Pr(z_n = 1), \ldots, \Pr(z_n = K)) \)
+
+The output is a **dependent sequence**
+\[
+\left\{  \left( \boldsymbol{\pi}^{(1)}, \boldsymbol{\phi}^{(1)}, \mathbf{z}^{(1)} \right),\  \ldots,\  \left( \boldsymbol{\pi}^{(S)}, \boldsymbol{\phi}^{(S)}, \mathbf{z}^{(S)} \right)  \right\}
+\]
+
+of samples approximately drawn from the joint posterior distribution \( p(\boldsymbol{\pi}, \boldsymbol{\phi}, \mathbf{z} \mid \mathbf{X}) \).
+
+```{r, echo = FALSE}
+load("samples_15k_3cluster_final.RData") 
+X = df
+K = 3
+V = c(2, 2, 5, 5, 4, 3)
+```
+
+```{r, eval = FALSE}
+X = df
+K = 3
+V = c(2, 2, 5, 5, 4, 3)
+gibbs_sampler <- function(X, K, V, alpha, beta_list, n_iter = 15000) {
+  N <- nrow(X)  
+  P <- ncol(X)  
+  z <- sample(1:K, N, replace = TRUE)  
+  pi <- rep(1 / K, K)                 
+  phi <- full_cond_phi(X, z, beta_list, K, V)   
+  samples <- list(pi = vector("list", n_iter),
+                  phi = vector("list", n_iter),
+                  z = vector("list", n_iter))
+  for (t in 1:n_iter) {
+    pi <- full_cond_pi(z, alpha)
+    phi <- full_cond_phi(X, z, beta_list, K, V)     
+    z <- full_cond_z(X, pi, phi, K)   
+    samples$pi[[t]] <- pi
+    samples$phi[[t]] <- phi
+    samples$z[[t]] <- z
+  }
+  return(samples)
+}
+samples <- gibbs_sampler_time(X = X, K = K, V = V, alpha = alpha, 
+                              beta_list = beta_list, n_iter = 15000)
+```
+
+To improve convergence and reduce autocorrelation, we discard the first $B = 400$ iterations as **burn-in** and apply **thinning** by storing one draw every $T = 10$ iterations. 
+
+```{r, echo=FALSE}
+thin <- 10
+burn_in <- 400
+pi_samples  <- samples$pi[seq(burn_in + 1, length(samples$pi), by = thin)]
+phi_samples <- samples$phi[seq(burn_in + 1, length(samples$phi), by = thin)]
+z_samples   <- samples$z[seq(burn_in + 1, length(samples$z), by = thin)]
+```
+
+# 5) Diagnostics
+To assess the convergence and mixing of the Gibbs sampler, we perform MCMC diagnostics.
+
+## 5.1) Diagnostics of \( \boldsymbol{\pi} \)
+### Trace plot and ACF
+
+```{r, echo = FALSE, fig.width=10, fig.height=5, fig.pos='H'}
+par(mfrow = c(3, 2), mar = c(3, 3, 1, 1), oma = c(1, 1, 0, 0))
+for (k in 1:K) {
+  traceplot <- sapply(pi_samples, function(p) p[k])
+  plot(traceplot, type = "l", main = paste("Traceplot pi[", k, "]"), ylab = "pi_k")
+  acf(traceplot, main = paste("ACF pi[", k, "]"))
+}
+par(mfrow = c(1, 1))
+```
+\begin{center}
+Figure 3: Convergence diagnostics for \( \boldsymbol{\pi} \)
+\end{center}
+
+```{r, echo = FALSE}
+pi_mean <- Reduce("+", pi_samples) / length(pi_samples)
+pi_matrix <- do.call(rbind, pi_samples)
+pi_mcmc <- mcmc(pi_matrix)
+ess <- effectiveSize(pi_mcmc)
+```
+
+\begin{table}[H]
+\centering
+\begin{tabular}{cccc}
+\toprule
+\textbf{} & \( \pi_1 \) & \( \pi_2 \) & \( \pi_3 \) \\
+\midrule
+\textbf{ESS} & \texttt{825.4476} & \texttt{1460} & \texttt{1460} \\
+\bottomrule
+\end{tabular}
+\caption{Effective Sample Size (ESS) for \( \boldsymbol{\pi} \)}
+\end{table}
+
+```{r, echo = FALSE, fig.width=12, fig.height=4, fig.pos='H'}
+ci_pi <- apply(pi_matrix, 2, quantile, probs = c(0.025, 0.975))
+par(mfrow = c(1, 3), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0))
+for (k in 1:K) {
+  hist(pi_matrix[, k], breaks = 30, probability = TRUE,
+       main = bquote("Posterior " ~ pi[.(k)]),
+       xlab = expression(pi), col = "#BDD7E7", border = "grey40")
+  
+  abline(v = pi_mean[k], col = "#a50f15", lwd = 2, lty = 2)  # Posterior mean
+  abline(v = ci_pi[1, k], col = "darkorange1", lwd = 2, lty = 2)  # 2.5%
+  abline(v = ci_pi[2, k], col = "darkorange1", lwd = 2, lty = 2)  # 97.5%
+
+}
+legend("topright", legend = c("Mean", "95% CI"), col = c("#a50f15", "darkorange1"),lty = c(2, 3), lwd = 2, bg = "white", box.lwd = 0, cex = 0.9)
+```
+\begin{center}
+Figure 4: Posterior mean and Credible Intervals of $\boldsymbol{\pi}$
+\end{center}
+
+## 5.2) Diagnostics of \( \boldsymbol{\phi}_{k,d} \)
+Displaying all trace plots and autocorrelation functions (ACF) for the full set of estimated \( \boldsymbol{\phi}_{k,d,v} \) parameters would be both unfeasible, given the large number of cluster-variable-category combinations.
+
+Therefore, our strategy begins with a general inspection of the **posterior distributions of the category proportions** for each variable within each latent cluster. This helps identify which variables contribute most clearly to the separation between clusters.
+
+For a selected subset of such informative variables — those showing the clearest distinction across clusters — we provide trace plots and ACF plots of their corresponding \( \phi_{k,d,v} \) values. This targeted approach offers an **indicative assessment of convergence** while avoiding redundancy.
+
+### Posterior Inference
+
+By inspecting the bar plots below of the posterior distributions of category proportions across clusters, we observe that variables Business and Quarter show no meaningful differentiation among clusters. In a future analysis, it could be considered to remove these variables from the model — while maintaining the number of clusters at \( K = 3 \) — to potentially improve model parsimony.
+
+In contrast, **variable Upfront exhibits a clear separation**, particularly distinguishing clusters 1 and 3 from cluster 2. For this reason, we focus our convergence diagnostics on the category-specific parameters \( \phi_{k,2,v} \) of this variable, analyzing their trace plots across all clusters.
+
+Other variables that appear to contribute strongly to cluster separation include: Customer, Shop and Business.
+
+```{r, echo = FALSE, fig.pos='H', fig.width=10, fig.height=4}
+phi_mean <- vector("list", K)
+for (k in 1:K) {
+  phi_mean[[k]] <- vector("list", length(V))
+  for (d in 1:length(V)) {
+    # Somma su tutte le iterazioni
+    sum_phi_kd <- Reduce("+", lapply(phi_samples, function(phi) phi[[k]][[d]]))
+    phi_mean[[k]][[d]] <- sum_phi_kd / length(phi_samples)
+  }
+}
+par(mfrow = c(2,3), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0)) 
+barplot_matrix <- do.call(rbind, lapply(1:K, function(k) {
+  phi_mean[[k]][[1]]
+}))
+barplot(t(barplot_matrix),
+        beside = TRUE,
+        col = c("#1f78b4", "darkorange1"), #numero colori 
+        legend.text = TRUE,
+        names.arg = paste("Cluster", 1:K),
+        main = "Businnes")
+barplot_matrix <- do.call(rbind, lapply(1:K, function(k) {
+  phi_mean[[k]][[2]]
+}))
+barplot(t(barplot_matrix),
+        beside = TRUE,
+        col = c("#1f78b4", "darkorange1"), #numero colori 
+        legend.text = TRUE,
+        names.arg = paste("Cluster", 1:K),
+        main = "Upfront")
+barplot_matrix <- do.call(rbind, lapply(1:K, function(k) {
+  phi_mean[[k]][[3]]
+}))
+barplot(t(barplot_matrix),
+        beside = TRUE,
+        col = c("lightblue", "#F5C710", "#1f78b4", "darkorange1", "#33a02c"), #numero colori 
+        legend.text = TRUE,
+        names.arg = paste("Cluster", 1:K),
+        main = "Shop")
+barplot_matrix <- do.call(rbind, lapply(1:K, function(k) {
+  phi_mean[[k]][[4]]
+}))
+barplot(t(barplot_matrix),
+        beside = TRUE,
+        col = c("lightblue","#F5C710", "#1f78b4", "darkorange1", "#33a02c"), #numero colori 
+        legend.text = TRUE,
+        names.arg = paste("Cluster", 1:K),
+        main = "Service")
+barplot_matrix <- do.call(rbind, lapply(1:K, function(k) {
+  phi_mean[[k]][[5]]
+}))
+barplot(t(barplot_matrix),
+        beside = TRUE,
+        col = c("lightblue","#1f78b4", "darkorange1", "#F5C710"), #numero colori 
+        legend.text = TRUE,
+        names.arg = paste("Cluster", 1:K),
+        main = "Customer")
+barplot_matrix <- do.call(rbind, lapply(1:K, function(k) {
+  phi_mean[[k]][[6]]
+}))
+barplot(t(barplot_matrix),
+        beside = TRUE,
+        col = c("lightblue","#1f78b4", "darkorange1"), #numero colori 
+        legend.text = TRUE,
+        names.arg = paste("Cluster", 1:K),
+        main = "Quarter")
+par(mfrow = c(1, 1))
+```
+\begin{center}
+Figure 5: Posterior distributions of category proportions \( \phi_{k,d,v} \) across clusters for selected variables
+\end{center}
+
+### Trace plot and ACF
+
+```{r, echo = FALSE, fig.width=12, fig.height=6, fig.pos='H'}
+num_clusters <- length(1:3)     # cluster 
+num_vars <- length(1)          # una sola variabile selezionata
+num_levels <- V[2]             # livelli della variabile 2
+total_panels <- num_clusters * num_vars * num_levels
+par(mfrow = c(3, 4), mar = c(4, 4 , 1, 1), oma = c(0, 0, 0 , 0)) 
+plot_trace_phi_with_acf <- function(phi_samples, clusters = c(1, 2,3), vars = c(2), V) {
+  for (k in clusters) {
+    for (d in vars) {
+      for (v in 1:V[d]) {
+        trace <- sapply(phi_samples, function(phi) phi[[k]][[d]][v])
+        
+        # Traceplot
+        plot(trace, type = "l",
+             main = paste0("Trace: φ[", k, "][", 2, "][", v, "]"),
+             ylab = "Value", xlab = "Iteration")
+        
+        # Autocorrelation plot
+        acf(trace, main = paste0("ACF: φ[", k, "][", 2, "][", v, "]"))
+      }
+    }
+  }
+}
+#esempio : 2 grafici: traceplot e acf, ripetuti per tutti i livelli della variabile.
+# variabile 2 ha 2 livelli, 2x2xcluster2 = 4 x 2 (traceplot e acf) = 12grafici
+plot_trace_phi_with_acf(phi_samples, clusters = 1:3, vars = 1, V = V) #esempio per variabile 1
+par(mfrow = c(1, 1))
+```
+\begin{center}
+Figure 6: Convergence diagnostics for \( \phi_{k,2,v} \)
+\end{center}
+
+## 5.3) Diagnostics for \( z_n \)
+Traditional convergence diagnostics are not directly applicable to \( \mathbf{z} \), as it is a discrete latent variable. Instead of tracking the trajectory of each individual \( z_n \), we assess the **stability of the cluster sizes** over the iterations of the Gibbs sampler.
+
+The figure below shows, for each iteration, the number of observations assigned to each cluster. Stable cluster sizes across iterations are indicative of good mixing and convergence of the latent allocation structure.
+
+If the cluster sizes fluctuate significantly over time or display trends, this may suggest issues with label switching, poor convergence, or an over-specified model.
+
+In our case, the trajectories of cluster sizes appear stable after the initial burn-in period, supporting the reliability of the inferred cluster structure.
+
+```{r, echo = FALSE, fig.width=5, fig.height=3, fig.align='center', out.width='60%', fig.pos='H'}
+par(mfrow = c(1, 1), mar = c(4, 4, 1, 1))
+cluster_freq <- sapply(z_samples, function(z) table(factor(z, levels = 1:K)))
+matplot(t(cluster_freq), type = "l", lty = 1, col = c("grey20", "#a50f15", "#33a02c"),
+        ylab = "Number of observations", xlab = "Iteration", cex.lab = 0.8, cex.axis = 0.8)
+legend("topright", legend = paste("Cluster", 1:K), col = c("grey20", "#a50f15", "#33a02c"), 
+       lty = 1, bg = "white", box.lwd = 0, cex = 0.6)
+```
+\begin{center}
+Figure 7: Clusters size over time
+\end{center}
+
+# 6) Posterior Predictive Check
+The posterior predictive distribution integrates over the uncertainty in the model parameters \( \boldsymbol{\theta} = (\boldsymbol{\pi}, \boldsymbol{\phi}) \) as follows:
+\[
+p(\tilde{\mathbf{X}} \mid \mathbf{X}) = \int p(\tilde{\mathbf{X}} \mid \boldsymbol{\theta}) \, p(\boldsymbol{\theta} \mid \mathbf{X}) \, d\boldsymbol{\theta}
+\]
+
+Since this integral is analytically intractable, we approximate it via **Monte Carlo** as follows:
+
+For each posterior draw \( s = 1, \ldots, S \):
+1. Use the sampled values \( \boldsymbol{\pi}^{(s)} \) and \( \boldsymbol{\phi}^{(s)} \) from Gibbs Sampling
+
+2. For each individual \( i = 1, \ldots, N \): 
+
+   2.1 Sample a cluster assignment from \( \tilde{z}_i^{(s)} \sim \text{Categorical}(\boldsymbol{\pi}^{(s)}) \)
+
+3. For each variable \( d = 1, \ldots, P \): 
+
+   3.1 Generate a replicated response from \( \tilde{X}_{i,d}^{(s)} \sim \text{Categorical}(\boldsymbol{\phi}_{\tilde{z}_i^{(s)},            d}^{(s)}) \)
+
+This yields a sequence \( \left\{ \tilde{\mathbf{X}}^{(1)}, \ldots, \tilde{\mathbf{X}}^{(S)} \right\} \) that approximates samples from \( p(\tilde{\mathbf{X}} \mid \mathbf{X}) \), allowing us to perform posterior predictive checks.
+
+```{r}
+simulate_yrep <- function(pi_samples, phi_samples, N, P, V, S = 1000) {
+  yrep_list <- vector("list", S)
+  zrep_list <- vector("list", S)
+  for (s in 1:S) {
+    pi_s  <- pi_samples[[s]]
+    phi_s <- phi_samples[[s]]
+    yrep <- matrix(NA, nrow = N, ncol = P)
+    z_s <- integer(N)
+    for (i in 1:N) {
+      z_i <- sample(1:length(pi_s), size = 1, prob = pi_s)
+      z_s[i] <- z_i
+      for (d in 1:P) {
+        yrep[i, d] <- sample(1:V[d], size = 1, prob = phi_s[[z_i]][[d]])
+      }
+    }
+    yrep_list[[s]] <- yrep
+    zrep_list[[s]] <- z_s
+  }
+  return(list(yrep_list = yrep_list, zrep_list = zrep_list))
+}
+yrep_list <- simulate_yrep(pi_samples, phi_samples, N = nrow(X), 
+                                  P = ncol(X), V = V, S = 1460)
+```
+
+To evaluate the ability of the model to reproduce the observed data structure, we perform posterior predictive checks focusing on the **distribution of categorical levels across latent clusters**.
+
+For a selected variable \( d \), we examine the distribution of its levels within each cluster \( k = 1, \ldots, K \), using synthetic datasets drawn from the posterior predictive distribution.
+
+Specifically, for each cluster and for each level of the variable we compute the relative frequencies of that level across all replicated datasets. Then, we summarize the resulting distribution using **boxplots** and we superimpose a red dot indicating the **observed frequency** of that level in the actual dataset (conditional on cluster assignment).
+
+
+```{r, echo = FALSE}
+barplot_ppc_cluster <- function(yrep_list, zrep_list, X, z_samples, V, var_index, cluster_index) {
+  S <- length(yrep_list)
+  freq_mat <- matrix(NA, nrow = S, ncol = V[var_index])
+  for (s in 1:S) {
+    z_rep <- zrep_list[[s]]
+    y_rep <- yrep_list[[s]]
+    
+    idx_cluster <- which(z_rep == cluster_index)
+    
+    if (length(idx_cluster) > 0) {
+      tab <- table(factor(y_rep[idx_cluster, var_index], levels = 1:V[var_index]))
+      freq_mat[s, ] <- tab / sum(tab)
+    }
+  }
+  z_last <- z_samples[[length(z_samples)]]
+  idx_obs <- which(z_last == cluster_index)
+  tab_obs <- table(factor(X[idx_obs, var_index], levels = 1:V[var_index]))
+  freq_obs <- tab_obs / sum(tab_obs)
+  freq_mean <- colMeans(freq_mat, na.rm = TRUE)
+  freq_sd   <- apply(freq_mat, 2, sd, na.rm = TRUE)
+  bar_centers <- barplot(freq_mean,
+                         ylim = c(0, 1),
+                         beside = TRUE,
+                         col = "#BDD7E7",
+                         names.arg = paste("Lev", 1:V[var_index]),
+                         main = paste("Var", var_index, "Cluster", cluster_index),
+                         ylab = "frequency")
+  arrows(bar_centers, freq_mean - freq_sd,
+         bar_centers, freq_mean + freq_sd,
+         angle = 90, code = 3, length = 0.05)
+  points(bar_centers, freq_obs, col = "#a50f15", pch = 19)
+}
+sim_results <- simulate_yrep(pi_samples, phi_samples, N = nrow(X), P = ncol(X), V = V, S = 1000)
+yrep_list <- sim_results$yrep_list
+zrep_list <- sim_results$zrep_list
+par(mfrow = c(1, 3))
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 1, cluster_index = 1)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 1, cluster_index = 2)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 1, cluster_index = 3)
+par(mfrow = c(1, 1))
+```
+
+```{r, echo = FALSE}
+par(mfrow = c(1, 3))
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 2, cluster_index = 1)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 2, cluster_index = 2)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 2, cluster_index = 3)
+par(mfrow = c(1, 1))
+```
+
+```{r, echo = FALSE}
+par(mfrow = c(1, 3))
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 3, cluster_index = 1)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 3, cluster_index = 2)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 3, cluster_index = 3)
+par(mfrow = c(1, 1))
+```
+
+```{r, echo = FALSE}
+par(mfrow = c(1, 3))
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 4, cluster_index = 1)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 4, cluster_index = 2)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 4, cluster_index = 3)
+par(mfrow = c(1, 1))
+```
+
+```{r, echo = FALSE}
+par(mfrow = c(1, 3))
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 5, cluster_index = 1)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 5, cluster_index = 2)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 5, cluster_index = 3)
+par(mfrow = c(1, 1))
+```
+
+```{r, echo = FALSE}
+par(mfrow = c(1, 3))
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 6, cluster_index = 1)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 6, cluster_index = 2)
+barplot_ppc_cluster(yrep_list = yrep_list, zrep_list = zrep_list, X = X, z_samples = z_samples, 
+                    V = V, var_index = 6, cluster_index = 3)
+par(mfrow = c(1, 1))
+```
+
+\begin{center}
+Figure 8: Posterior Predictive Distribution vs Observed Data
+\end{center}
+
+We can see that the observed test statistics frequently fall outside the distribution of the same statistics computed from replicated datasets, as shown in the boxplots. This indicates that the Bayesian Latent Class Model, in its current specification, does not adequately capture the structure of the observed data.
+
+In any way, we belive that the **nature of the dataset**, where each observation corresponds to a single sales transaction. Such a unit of analysis may not be ideal for uncovering latent clusters, as the variability across individual transactions is high and only indirectly linked to more stable behavioral patterns. A more suitable clustering structure could potentially emerge from analyzing aggregated data at the customer or employee level. However, implementing such an approach would require access to variables that characterize customers or sales agents: data which were not available in the present study.
+
+Additionally, we believe that **extending the model to include a prior distribution on the number of latent clusters \( K \)** could significantly improve model flexibility and performance in future applications.
+
+# 7) Conclusion
+The Bayesian Latent Class Model (BLCM) represents a flexible and principled approach for uncovering hidden heterogeneity in multivariate categorical data. Its Bayesian formulation allows for the incorporation of prior knowledge, the quantification of uncertainty and straightforward model-based clustering in contexts where traditional methods may fall short. Typical domains of application include:
+\begin{itemize}
+  \item \textbf{Market segmentation}: identifying distinct groups of customers based on preferences;
+  \item \textbf{Healthcare and epidemiology}: uncovering latent disease subtypes or patient profiles based on symptoms.
+  \item \textbf{Political science and voting behavior}: detecting latent groups of individuals based on categorical responses to surveys.
+\end{itemize}
+Thanks to its interpretability and formal probabilistic foundation, the BLCM remains a valuable tool for both exploratory and confirmatory analysis across many disciplines.
+
+\begin{thebibliography}{99}
+
+\bibitem{agresti}
+Agresti, A. (2005). \textit{Bayesian Inference for Categorical Data Analysis}. Department of Statistics, University of Florida.  
+
+\bibitem{malsiner}
+Malsiner-Walli, G., Grün, B., \& Frühwirth-Schnatter, S. (2016). \textit{Without Pain – Clustering Categorical Data Using a Bayesian Mixture of Finite Mixtures of Latent Class Analysis Models}.  
+
+\bibitem{argiento}
+Argiento, R., Filippi-Mazzola, E., \& Paci, L. (2021). \textit{Model-based clustering of categorical data based on the Hamming distance}.  
+Cited for model selection via information criteria (BIC, ICL).
+
+\bibitem{bic}
+Schwarz, G. (1978). Estimating the dimension of a model. \textit{The Annals of Statistics}, \textbf{6}(2), 461–464.  
+Cited as the original reference for the Bayesian Information Criterion (BIC).
+
+\bibitem{icl}
+Biernacki, C., Celeux, G., \& Govaert, G. (2000). Assessing a mixture model for clustering with the integrated completed likelihood. \textit{IEEE Transactions on Pattern Analysis and Machine Intelligence}, \textbf{22}(7), 719–725.  
+
+\bibitem{rodriguez}
+Rodríguez, C. E., \& Walker, S. G. (2014). \textit{Label Switching in Bayesian Mixture Models: Deterministic Relabeling Strategies}.  
+
+\bibitem{castelletti}
+Castelletti, F., Consonni, G., \& Della Vedova, M. L. (2023). \textit{Joint Structure Learning and Causal Effect Estimation for Categorical Graphical Models}. Università Cattolica del Sacro Cuore, Milan.  
+
+\end{thebibliography}
