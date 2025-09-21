@@ -1,0 +1,631 @@
+---
+title: "Final Assignment"
+author: "Asia Grillo, ID student: 5409650"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+packages <- c("RColorBrewer", "wesanderson", "faraway", "alr4", "corrplot", 
+              "effects", "ellipse", "knitr", "MASS", "leaps", "boot", "ggplot2", 
+              "geosphere", "spdep", "dplyr", "countrycode", "rnaturalearth", 
+              "rnaturalearthdata", "sf", "tinytex", "pander", "kableExtra", "broom",
+              "GGally")
+lapply(packages, library, character.only = TRUE)
+setwd("/Users/asiagrillo/Desktop/Applied Linear Models/PROJECT/Final Assignment")
+dataset_original = read.csv("dataset.csv")
+dataset_original$Continent <- as.factor(dataset_original$Continent)
+dataset_original$Continent <- relevel(dataset_original$Continent, ref = "America")
+dataset_original <- dataset_original[, !names(dataset_original) %in% "Urban_pop_tot"]
+colnames(dataset_original)[colnames(dataset_original) == "Life_expectacy"] <- "Life_expectancy"
+dataset_orig = read.csv("dataset.csv")
+dataset = read.csv("dataset.csv")
+dataset$Continent <- as.factor(dataset$Continent)
+dataset$Continent <- relevel(dataset$Continent, ref = "America")
+dataset <- dataset[, !names(dataset) %in% "Urban_pop_tot"]
+colnames(dataset)[colnames(dataset) == "Life_expectacy"] <- "Life_exp"
+colnames(dataset)[colnames(dataset) == "Unemployment"] <- "Unempl"
+colnames(dataset)[colnames(dataset) == "Industry_GDP"] <- "Ind_GDP"
+colnames(dataset)[colnames(dataset) == "Urban_pop"] <- "Urb_pop"
+colnames(dataset)[colnames(dataset) == "Renew_energy"] <- "Ren_en"
+dataset_name <- read.csv("dataset.csv")
+dataset_name <- dataset_name[, !names(dataset_name) %in% "Urban_pop_tot"]
+dataset_name$CO2_emission <- log(dataset_name$CO2_emission)
+colors_blues <- brewer.pal(4, "YlGnBu")
+colnames(dataset_name) <- substr(colnames(dataset_name), 1, 8)
+dataset_name <- dataset_name[, -c(1, 2, 3, 9, 10, 11, 13, 15, 16, 17, 18, 20)]
+```
+
+# 1) Exploratory analysis
+
+## 1.1) Dataset Description
+
+For this project, I created a dataset by integrating data from multiple \textbf{sources}: \emph{EDGAR} (Emission Database for Global Atmospheric Research), a European Commission project that provides consistent estimates of fossil CO\textsubscript{2} emissions worldwide; \emph{WORLD BANK}, offering a range of socio-economic and environmental indicators; \emph{ESA} (European Space Agency), which detects wildfire occurrences through the Sentinel-3 satellite.  
+The dataset was harmonized using country codes and all data refer to the same year, \textbf{2021}, ensuring temporal consistency across variables.  
+
+The \textbf{main goal} of this analysis is to investigate the associations between CO\textsubscript{2} emissions and a set of independent variables that capture the socioeconomic, demographic, and environmental characteristics of countries. By analyzing these relationships, the objective is to identify key factors driving CO\textsubscript{2} emissions and assess their potential impact.  
+To achieve this, the **response variable** in this study is **CO\textsubscript{2} emissions**, which represents the amount of carbon dioxide released into the atmosphere. It is expressed in \emph{megatons (Mt)}, which corresponds to million metric tons. Summing the values in this column, we find that in 2021 the world emitted approximately 35,780 Mt of CO\textsubscript{2}.
+
+First of all, I removed four observations with **missing values** in GDP capita and excluded five predictors with more than 10% missing values. The remaining missing data, accounting for 0.7% of the total dataset, were imputed using MissForest, ensuring that the density function of the predictors remained nearly unchanged.   
+After these preprocessing steps, the final dataset consists of \textbf{174 countries}, which represent the statistical units of the analysis, and a total of **18 covariates**, which are:
+
+\begin{itemize}
+ \setlength{\itemsep}{0pt} % Riduce lo spazio tra gli elementi della lista  
+  \setlength{\parskip}{0pt} % Elimina lo spazio tra i paragrafi  
+  \setlength{\leftskip}{-5pt} % Riduce i margini sinistri  
+  \setlength{\rightskip}{-5pt} % Riduce i margini destri  
+  \small %
+  \item \emph{GDP capita}: Gross Domestic Product divided by midyear population, expressed in U.S. dollars (USD).
+  \item \emph{Renewable energy}: Percentage of a country's total final energy consumption derived from renewable sources.
+  \item \emph{Total population}: Midyear estimates of all residents in a country.
+  \item \emph{Urban population}: Percentage of people living in urban areas.
+  \item \emph{Population density}: Number of people per square kilometer, calculated as the midyear population divided by the total land area of a country.
+  \item \emph{Population growth}: Annual percentage increase in a country's population, calculated using the exponential growth rate.
+  \item \emph{Agriculture GDP}: Economic contribution of primary sector activities, expressed as a percentage of a country's GDP.
+  \item \emph{Industry GDP}: Economic contribution of industrial activities, including construction and manufacturing, expressed as a percentage of a country's GDP.
+  \item \emph{Manufacturing GDP}: Economic contribution of the manufacturing sector, expressed as a percentage of a country's GDP.
+  \item \emph{Agricultural land}: Country's total land area used for agricultural purposes, expressed as a percentage.
+  \item \emph{Forest area}: Percentage of land covered by forests.
+  \item \emph{Energy intensity}: Amount of energy used per unit of economic output, measured in megajoules per U.S. dollar of GDP at 2017 purchasing power parity (PPP).
+  \item \emph{Electricity access}: Percentage of population with access to electricity.
+  \item \emph{Natural resource rents}: Revenues generated from natural resources, expressed as a percentage of a country's GDP.
+  \item \emph{Life expectancy}: Average number of years a newborn is expected to live under current mortality conditions.
+  \item \emph{Unemployment rate}: Percentage of the total labor force that is actively seeking employment in a country.
+  \item \emph{Fire spots}: Number of wildfire occurrences detected by the Sentinel-3 satellite in a country.
+  \item \emph{Continent}: A \textbf{categorical variable} indicating the geographical location of each country. Originally, this variable had six levels (Europe, Asia, Oceania, Africa, North America, South America). To simplify the analysis, North America and South America were merged into a single category, \emph{America}, while Asia and Oceania were grouped together under \emph{Asia-Oceania}.  The final variable consists of \textbf{four levels}: \emph{Europe} with 36 countries, \emph{Africa} with 49 countries, \emph{America} with 33 countries and \emph{Asia-Oceania} with 56 countries. In the regression analysis, \emph{Europe} is set as the \textbf{baseline} category.
+\end{itemize}
+
+Below is the table with the \textbf{summary statistics} of the quantitative variables that are not expressed as percentages, providing insights into their distribution and structure.
+
+```{r, echo = FALSE}
+panderOptions("table.split.table", Inf)
+summary_table <- summary(dataset_original[ c(4, 5, 7, 16, 19, 21)])
+kable(summary_table, caption = "Summary of same variables") %>%
+  kable_styling(font_size = 8)
+```
+
+## 1.2) Graphical representation of data
+
+To enhance the interpretability of the coefficients, all independent variables were **centered** by subtracting their respective means. Additionally, since the response takes only positive values, a **logarithmic transformation** was applied, allowing it to span the entire set of real numbers.  
+From the figure below, we observe that the asymmetry in the response variable has been corrected, making its distribution more symmetric.
+
+```{r, echo = FALSE}
+dataset$CO2_emission <- log(dataset$CO2_emission) 
+dataset[ ,5:21] = scale(dataset[, 5:21], center = TRUE, scale = FALSE)
+```
+
+```{r, echo = FALSE, fig.width = 5.5, fig.height = 2.5, fig.align="center", fig.pos="H", fig.cap="Histogram of CO2 emissions before and after the logarithmic transformation."} 
+par(mfrow = c(1, 2), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0))  
+hist(dataset_original$CO2_emission, freq = FALSE, col = "gray",  
+     xlab = "CO2 emission", ylab = "Density", main = "", border = "white",  
+     cex.axis = 0.8, cex.lab = 0.8)
+hist(dataset$CO2_emission, freq = FALSE, col = "gray",  
+     xlab = "log(CO2 emission)", ylab = "", main = "", border = "white",  
+     cex.axis = 0.8, cex.lab = 0.8) 
+lines(density(dataset$CO2_emission), col = "darkblue", lwd = 2) 
+legend("topright", legend = "Density Function", col = "darkblue", lwd = 2, cex = 0.4)  
+par(mfrow = c(1, 1))  
+```
+
+The boxplot below shows the distribution of log-transformed CO\textsubscript{2} emissions across different continents. \textbf{Asia-Oceania} exhibits the highest variability, with a wider interquartile range and more extreme values, reflecting the fact that \emph{China} alone contributes 51.07\% of the continent’s emissions and 34.84\% of global emissions. \textbf{Europe} has a relatively high median CO\textsubscript{2} emission, with a more concentrated distribution, in line with \emph{Germany}'s 20.55\% share of European emissions and 1.86\% globally. \textbf{America} shows a moderate spread, with the \emph{United States} contributing 69.30\% of continental emissions and 13.28\% globally. \textbf{Africa} has the lowest median emissions and the smallest variability, where \emph{South Africa} accounts for 34.22\% of African emissions but only 1.22\% of global CO\textsubscript{2} emissions.
+
+```{r, echo = FALSE, fig.width =4.5, fig.height = 2, fig.align="center", fig.pos="H", fig.cap="CO2 Emissions by Continent"}
+par(mfrow = c(1, 1), mar = c(1, 4, 1, 1), oma = c(0, 0, 0, 0))  
+colors_blues <- brewer.pal(4, "YlGnBu")
+boxplot(dataset$CO2_emission ~ dataset$Continent,
+        xlab = "", ylab = "log(CO2 Emission)",cex.axis = 0.8, cex.lab = 0.8, col = colors_blues)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, fig.width =8, fig.height = 6, fig.align="center", fig.pos="H", fig.cap="Scatter plots, Histograms and Correlation Matrix"}
+ggpairs(
+  dataset_name, 
+  upper = list(continuous = wrap("points")),  
+  diag = list(continuous = wrap("barDiag")),
+  lower = list(continuous = wrap("cor", size = 5, color = colors_blues[4]))
+) + 
+  theme(axis.text = element_blank())
+```
+
+The plot above shows, above the main diagonal, \textbf{scatter plots} between the response variable and some of the predictors. It is already apparent that a non-linear transformation of the {Fire spots} and \emph{Pop tot} variables will likely be necessary to improve their linear relationship with the response. This is also noticeable from the skewed distribution visible in the \textbf{histograms} along the main diagonal for these two variables. A transformation could also improve the skewed distribution of \emph{GDP capita}. However, since this variable was not selected in the initial variable selection, it will is not considered in the model. Below the main diagonal, we can find \textbf{correlation matrix}, with the highest correlations between 0.5 and 0.7 observed for \emph{GDP capita} with \emph{Urban pop} and \emph{Life expectancy}, and between \emph{Renewable energy} and \emph{Life expectancy}.
+
+# 2) Variable selection
+
+## 2.1) Best Subset Selection
+
+To select the most relevant predictors, **Best Subset Selection** was performed, evaluating all possible combinations to identify the best model based on the highest \( R^2 \). To reduce computational complexity, **Forward** and **Backward Stepwise Selection** were also applied, both leading to the same final model as Best Subset Selection.  
+
+Five selection criteria were considered to determine the optimal number of predictors. The \textbf{Mallow’s \( \mathbf{C}_{\mathbf{p}} \)} statistic and **Akaike Information Criterion (AIC)** penalize model complexity, with lower values preferred. The **Bayesian Information Criterion (BIC)** applies a stronger penalty, favoring simpler models, so lower values are preferred. The \textbf{Adjusted \( \mathbf{R}^2 \)} corrects for the number of predictors and is preferred higher, as it indicates a better fit. Finally, the **Cross-Validation error** was computed, with lower values preferred to identify the best model.  
+
+After the initial variable selection, diagnostic analysis of the selected model revealed issues of **non-linearity**. To address this, quadratic terms were introduced for \emph{Pop tot} and \emph{Industry GDP}, along with a logarithmic transformation for \emph{Fire spots}. Additionally, an interaction term was considered to allow for different slopes of \emph{GDP capita} based on the continents.  
+Following these transformations, the variable selection process was repeated to reassess the optimal set of predictors.
+
+```{r}
+n = nrow(dataset)
+dataset$Fire_spots <- log(dataset$Fire_spots + (abs(min(dataset$Fire_spots)) + 1))
+best_model <- regsubsets(CO2_emission ~ . + Continent*GDP_capita + I(Pop_tot^2) 
+                         + I(Ind_GDP^2), data = dataset[, -c(1,2)],  nvmax = 25)
+summ <- summary(best_model)
+aic_values = numeric(25)
+for (k in 1:25) {
+  aic_values[k] = summ$bic[k] - (k + 2) * log(n) + 2 * (k + 2)
+}
+```
+
+```{r, echo = FALSE, fig.width =8, fig.height = 2, fig.align="center", fig.pos="H", fig.cap="Model Comparison Criteria in the Best Subset Selection Approach"}
+par(mfrow = c(1, 4), mar = c(2, 2, 1, 1), oma = c(1, 0, 1, 0))
+plot(summ$bic, type = "b", pch = 20,
+     xlab = "", ylab = "", main = "Drop in BIC")
+abline (v=which.min(summ$bic),col = 2, lty=2)
+plot(aic_values, type = "b", pch = 20,
+     xlab = "", ylab = "", main = "Drop in AIC")
+abline(v = which.min(aic_values), col = 2, lty = 2)
+plot(summ$cp, type = "b", pch = 20,
+     xlab = "", ylab = "", main = "Mallow's Cp")
+abline (v=which.min(summ$cp),col = 2, lty=2)
+plot(summ$adjr2, type = "b", pch = 20,
+     xlab = "", ylab = "", main = "Adjusted R^2")
+abline (v=which.max(summ$adjr2),col = 2, lty=2)
+par(mfrow = c(1, 1))
+```
+
+```{r, echo = FALSE, fig.width=7, fig.height=3, eval = FALSE}
+par(mfrow = c(1, 3))
+plot(best_model, scale = "bic")  
+plot(best_model, scale = "adjr2")
+plot(best_model, scale = "Cp")
+par(mfrow = c(1, 1))
+```
+
+Based on the BIC graph, the model with **9 predictors** was selected:
+
+```{r, echo = FALSE}
+summary_table <- coef(best_model, 9)
+predictors <- names(summary_table)
+panderOptions("table.split.table", Inf)
+pander(predictors, caption = "Selected Predictors in the Model", row.names = FALSE)
+```
+
+
+Although the lowest BIC corresponds to a model with 12 predictors, the **principle of parsimony** suggests that, among models with similar BIC values, the one with fewer predictors should be preferred. This model also ensures compliance with the **principle of hierarchy**, as by selecting the previously added quadratic terms, it has also included their corresponding first-degree terms.  
+The model with 10 predictors would have added the categorical variable, but it was decided to exclude it in order to avoid adding three more predictors, thus keeping the model simpler.
+
+## 2.2) Cross Validation error
+
+We now apply \textbf{k-Fold Cross Validation}, which evaluates model performance by partitioning the data into \( k \) subsets. The model is iteratively trained on \( k-1 \) folds and validated on the remaining fold.  
+At each iteration, the \emph{Mean Squared Error (MSE)} is calculated for each model with a given number of predictors and the MSE values for models with the same number of predictors are averaged. The model with the lowest average MSE is selected. In this case, each observation is assigned to one of \( k = 10 \) folds, and the results are used to assess model performance.
+
+```{r}
+dataset.cv <- dataset[, -c(1,2)] #without Country name and Country code
+p = 25
+k = 10
+set.seed(123)
+folds = sample(1:k, n, replace = TRUE)
+cv.errors = matrix(NA, k, p, dimnames = list(NULL, paste(1:p)))
+for(j in 1:k) {
+  best.fit = regsubsets(CO2_emission ~ . + Continent*GDP_capita + I(Pop_tot^2) 
+                         + I(Ind_GDP^2), data = dataset.cv[folds != j,],  nvmax = 25)
+  for (i in 1:p) {
+    mat = model.matrix(as.formula(best.fit$call[[2]]), dataset.cv[folds == j,])
+    coefi = coef(best.fit, id = i)
+    xvars = names(coefi)
+    pred= mat[, xvars] %*% coefi
+    cv.errors[j, i] = mean  ((dataset.cv$CO2_emission[folds == j] - pred) ^ 2)  
+  }
+}
+cv.mean = colMeans(cv.errors)
+```
+
+```{r, echo = FALSE, fig.width =4.5, fig.height = 2.5, fig.align="center", fig.pos="H", fig.cap="k-Fold Cross Validation error Criteria"}
+par(mfrow = c(1, 1), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0))  
+plot(cv.mean, type = "b", pch = 20, xlab = "Number of predictors", ylab = "CV error", cex.axis = 0.8, cex.lab = 0.8)
+abline(v = which.min(cv.mean), col = 2, lty = 2)
+```
+
+The MSE starts to stabilize around the model with 10 predictors, but even in this case, the model with 9 predictors is preferred to ensure lower complexity and better alignment with the principle of parsimony.  
+
+The \textbf{final regression model fitted} for this analysis is:
+
+$$
+\begin{aligned}
+\log(Y) &= \beta_0 + \beta_1 x_{\text{Ren\_en}} + \beta_2 x_{\text{Pop\_tot}} + \beta_3 x_{\text{Pop\_tot}}^2 + \beta_4 x_{\text{Urb\_pop}} + \beta_5 x_{\text{Ind\_GDP}} \\
+& \quad + \beta_6 x_{\text{Ind\_GDP}}^2 + \beta_7 x_{\text{Agri\_land}} + \beta_8 x_{\text{Life\_exp}} + \beta_9 \log(x_{\text{Fire\_spots}}) + \epsilon
+\end{aligned}
+$$
+
+
+# 3) Collinearity
+
+Multicollinearity occurs when two or more predictor variables in a regression model are highly correlated, making it difficult to isolate the individual effect of each predictor. To identify potential collinearity issues, I computed the **Variance Inflation Factor (VIF)**, which quantifies how much the variance of an estimated regression coefficient is inflated due to collinearity in the model. The VIF is defined as:  
+
+\[
+VIF(\hat{\beta_j}) = \frac{1}{1 - R^2_{X_j | X_{-j}}}
+\]
+
+where \( R^2_{X_j | X_{-j}} \) represents the coefficient of determination from the regression of \( X_j \) onto all other predictors. If \( R^2 \) is close to 1, it indicates that \( X_j \) is highly correlated with the other predictors, leading to a large VIF value. A VIF of 1 suggests no collinearity, while a VIF greater than 10 indicates a high level of multicollinearity.  
+
+```{r, echo = FALSE}
+model <- lm(CO2_emission ~ Ren_en + Pop_tot + I(Pop_tot^2) + Urb_pop + Ind_GDP + I(Ind_GDP^2) + Agri_land + Life_exp + Fire_spots, data = dataset)
+panderOptions("table.split.table", Inf)
+vif <- vif(model)
+vif_transposed <- t(vif)  # Transpose the VIF table
+kable(vif_transposed, caption = "VIF values") %>%
+  kable_styling(font_size = 8)
+```
+
+From the VIF values, we observe two high values. One of the main issues when adding a quadratic term is the potential correlation between the first-degree and second-degree predictors. While this does not occur for \emph{Industry GDP}, it is present for \emph{Pop tot}, which could lead to computational inaccuracies in the OLS estimation.
+
+# 4) Diagnostics
+
+A **diagnostic analysis** is performed on the model to assess whether the fundamental assumptions of linear regression hold and to identify any potential violations that could affect model performance.
+
+## 4.1) Homoschedasticity
+
+The variance of the residuals should remain constant across all levels of the predictors. The \textbf{residuals versus fitted values plot} is a \emph{diagnostic tool} for assessing homoscedasticity. If the assumption holds, the residuals should have a constant spread around zero, forming a null plot. Any increasing or decreasing spread suggests \textbf{heteroscedasticity}, a violation of the constant variance assumption. This plot can also highlight potential non-linearity in the model's structure.
+
+```{r, echo = FALSE, fig.width = 4.5, fig.height = 2.5, fig.align="center", fig.pos="H", fig.cap="Residuals vs fitted value plot"}
+fitted = fitted.values(model)
+res = residuals(model)
+res_vs_fitted = smooth.spline(x = fitted, y = res)
+par(mfrow = c(1, 1), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0))  
+plot(fitted, res, pch = 18, cex = 0.7, ylab = "Residuals", xlab = "Fitted values", cex.axis = 0.8, cex.lab = 0.8)
+abline(h=0,col = "red", lty = 2)
+```
+
+The plot suggests that the assumption of linearity is approximately satisfied, thanks to the applied transformations. However, these modifications may have introduced \emph{mild} heteroscedasticity, as indicated by the \textbf{left-opening megaphone} pattern.  
+A traditional solution for addressing heteroscedasticity would involve transforming the response variable using a \emph{concave} function, which has already been applied in this case. Since the problem persists, it may be beneficial to try a \textbf{Weighted Least Squares (WLS)}, instead of the Ordinary Least Squares (OLS). However, it was preferred not to implement this solution, as the problem does not appear to be severe.
+
+## 4.2) Linearity
+
+The relationship between the predictors and the response variable should be linear. This assumption can be expressed as:
+\[
+E(Y) = X\beta
+\]
+where \(E(Y)\) represents the expected value of the response variable, \(X\) is the matrix of predictors and \(\beta\) is the vector of coefficients.
+One of the most effective diagnostic tools for assessing the adequacy of this structural assumption is the \textbf{residual plots against individual predictors}. If the assumption of linearity holds, the residuals should be randomly scattered around zero, without systematic patterns.
+
+```{r, echo = FALSE, fig.width=8, fig.height=3, fig.align="center", fig.pos="H", fig.cap="Residuals vs Individual Predictors plot"}
+par(mfrow = c(2, 4), mar = c(4, 1, 1, 1), oma = c(0, 0, 0, 0)) 
+residualPlot(model, variable = "Ren_en", ylab = "")
+residualPlot(model, variable = "Pop_tot", ylab = "")
+residualPlot(model, variable = "I(Pop_tot^2)", ylab = "")
+residualPlot(model, variable = "Urb_pop", ylab = "")
+residualPlot(model, variable = "Ind_GDP", ylab = "")
+residualPlot(model, variable = "I(Ind_GDP^2)", ylab = "")
+residualPlot(model, variable = "Agri_land", ylab = "")
+residualPlot(model, variable = "Life_exp", ylab = "")
+#residualPlot(model, variable = "Fire_spots", ylab = "")
+```
+
+The residual plots indicate that the inclusion of quadratic terms has helped linearize the relationship between \emph{Pop tot}, \emph{Ind GDP} and the response variable. The residuals for the linear terms of these predictors exhibit a linear pattern, suggesting that the quadratic transformations have successfully captured part of the non-linearity. However, the residual plots for the quadratic terms themselves still show non-linearity, as evidenced by the curved trends. For the other predictors, no strong patterns emerge. The variable \emph{Fire spots} was not plotted due to space limitations, but it satisfies the linearity assumption due to the previous logarithmic transformation.
+
+```{r, fig.width=7, fig.height=3.5, echo=FALSE, eval=FALSE}
+par(mfrow = c(2, 4), mar = c(2, 2, 1.5, 1), oma = c(4, 1, 4, 1))
+avPlot(model, variable = "Pop_tot", main = "Pop_tot")
+avPlot(model, variable = "I(Pop_tot^2)", main = "I(Pop_tot^2)")
+avPlot(model, variable = "Ind_GDP", main = "Ind_GDP")
+avPlot(model, variable = "I(Ind_GDP^2)", main = "I(Ind_GDP^2)")
+avPlot(model, variable = "Urb_pop", main = "Urb_pop")
+avPlot(model, variable = "Agri_land", main = "Agri_land")
+avPlot(model, variable = "Life_exp", main = "Life_exp")
+avPlot(model, variable = "Fire_spots", main = "Fire_spots")
+mtext("Added-Variable Plots", outer = TRUE, cex = 1.5, font = 2)
+par(mfrow = c(1,1))
+```
+
+## 4.3) Normality Assumption
+
+The residuals should follow a normal distribution. The \textbf{Q-Q plot} is commonly used to assess this assumption by comparing the empirical quantiles of the residuals to those of a normal distribution. If the residuals are normally distributed, the points will align along a straight diagonal line, with deviations indicating potential issues like skewness or heavy tails. 
+
+```{r, fig.width=6, fig.height=3, fig.align="center", fig.pos="H", echo=FALSE, fig.cap="Normal Q-Q Plot on the right and the Histogram of Residuals on the left"}
+par(mfrow = c(1, 2), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0))  
+qqnorm(residuals(model), cex.axis = 0.8, cex.lab = 0.8, main = "")
+qqline(residuals(model), col = "red")
+shapiro.test <- shapiro.test(res)
+hist(res, probability = TRUE, xlab = "Residuals", cex.axis = 0.8, cex.lab = 0.8 , main = "")
+lines(density(res), col = "red", lwd = 2)
+```
+
+As shown in the figure, the Q-Q plot indicates that the residuals approximately follow a normal distribution, as the points align closely with the red diagonal line. The histogram of the residuals further supports this observation, showing a bell-shaped distribution that reasonably fits the normal curve. Therefore, the assumption of normality for the residuals can be considered valid.  
+
+In addition to graphical diagnostics, the **Shapiro-Wilk test** provides a formal statistical evaluation of the normality assumption. This test assesses the null hypothesis that the residuals follow a normal distribution:  
+
+\[
+\begin{cases}
+H_0: \text{\(\epsilon \sim N(0, \sigma^2 I_n\))} \\
+H_1: \text{Otherwise}
+\end{cases}
+\]
+
+```{r, echo = FALSE}
+pander(shapiro.test, caption = "Shapiro-Wilk Normality Test", row.names = FALSE )
+```
+
+The test result did not reject the null hypothesis, reinforcing the assumption of normality in the residuals.  
+
+This assumption allows us to make inferences about the model, supporting hypothesis testing and the construction of confidence intervals.
+
+## 4.4) Correlation
+
+Residuals should be independent and not exhibit autocorrelation. The spatial distribution map helps detect potential \textbf{spatial correlation} in the residuals. Ideally, residuals should be randomly distributed across regions without any specific pattern.
+
+```{r, echo = FALSE, fig.width = 5.5, fig.height = 3.5, fig.align="center", fig.pos="H", fig.cap="Spatial Distribution of Residuals"}
+par(mfrow = c(1, 1), mar = c(1, 1, 1, 1), oma = c(0, 0, 0, 0))  
+dataset$res <- resid(model)
+world_data <- ne_countries(scale = "medium", returnclass = "sf")
+capital_coords <- world_data %>%
+  dplyr::select(iso_a3, name, geometry) %>%
+  mutate(
+    longitude = st_coordinates(st_centroid(st_geometry(geometry)))[,1],
+    latitude = st_coordinates(st_centroid(st_geometry(geometry)))[,2]
+  ) %>%
+  rename(Country_code = iso_a3, Country_name = name)
+dataset <- dataset %>%
+  left_join(capital_coords, by = "Country_code")
+dataset$Country_name <- dataset$Country_name.x
+dataset <- dataset %>%
+  mutate(
+    longitude = ifelse(Country_name == "France", 2.2137, longitude),
+    latitude = ifelse(Country_name == "France", 46.6034, latitude),
+    longitude = ifelse(Country_name == "Norway", 8.4689, longitude),
+    latitude = ifelse(Country_name == "Norway", 60.4720, latitude)
+  )
+dataset <- dataset %>%
+  filter(!is.na(longitude) & !is.na(latitude))
+distance_matrix <- distm(
+  x = dataset[, c("longitude", "latitude")], 
+  fun = distGeo
+)
+distance_matrix[is.na(distance_matrix)] <- max(distance_matrix, na.rm = TRUE)
+W_distance <- 1 / (1 + distance_matrix)
+listw_distance <- mat2listw(W_distance, style = "W")
+moran_test <- moran.test(dataset$res, listw_distance)
+#print(moran_test)
+world_data <- world_data %>%
+  left_join(dataset, by = c("iso_a3" = "Country_code"))
+if(!"res" %in% names(world_data)) {
+  stop("Error: Residuals column (res) not found in world_data after merge.")
+}
+ggplot(world_data) +
+  geom_sf(aes(fill = res), color = "grey50") +  # Bordo grigio per più contrasto
+  scale_fill_gradientn(
+    colors = c("#313695", "#4575b4", "#74add1", "#abd9e9", "#ffffbf", 
+               "#fdae61", "#f46d43", "#d73027", "#a50026"),  # Più sfumature nei blu e nei rossi
+    values = scales::rescale(c(min(world_data$res, na.rm = TRUE), 
+                               quantile(world_data$res, 0.2, na.rm = TRUE),  
+                               0,  
+                               quantile(world_data$res, 0.8, na.rm = TRUE), 
+                               max(world_data$res, na.rm = TRUE))),  # Sposta le sfumature
+    limits = c(min(world_data$res, na.rm = TRUE), max(world_data$res, na.rm = TRUE)),
+    name = "Residuals"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+From the map, groups of similar residual values emerge, meaning that countries in the same geographical region tend to have residuals of the same sign and magnitude. Notably, patterns can be observed in regions like Europe, Africa and parts of South America. The presence of these spatial patterns indicates that the assumption of uncorrelated errors may be violated.  
+As a consequence, the estimated standard errors will tend to be \emph{underestimated}, leading to narrower confidence and prediction intervals. Additionally, the p-values associated with the model will be lower than they should be, potentially leading to the \emph{erroneous conclusion} that some parameters are statistically significant. A common remedy for dealing with correlated errors is to use \textbf{Generalized Least Squares (GLS)}, which adjusts for the correlation between residuals.
+
+## 4.5) Unusual observation
+
+Outliers, high-leverage and influential points should be identified to assess their impact on the model.  
+
+### 4.5.1) Outliers
+
+An outlier is an observation that does not fit well within the assumed regression model. Outliers are typically detected using \textbf{standardized residuals}, which assess how far an observation deviates from the model’s expected behavior. They are computed as:
+\[
+r_i =\frac{e_i}{\hat{\sigma} \sqrt{1 - h_{jj}}}
+\]
+A point is considered an outlier if its absolute studentized residual exceeds a certain threshold. Typically, a cutoff of 3 is used, meaning that if \(|r_i| > 3\) the observation is likely an outlier.  
+
+In the model, the minimum and maximum values of the standardized residuals are:
+
+```{r, echo = FALSE}
+rsta <- range(rstandard(model))
+pander(rsta, caption = "Range of standardized residuals", row.names = FALSE)
+```
+
+Since they do not exceed the rule of thumb threshold, no outliers were detected.
+
+### 4.5.2) High Leverage Points
+
+A fundamental aspect of regression diagnostics is identifying \textbf{high leverage points}, which are data points with extreme values for the predictor variables and located far from the mean of the other data points in the predictor space. Leverage points are determined by the \emph{hat values}, the diagonal elements of the hat matrix \( H \), where \( h_{ii} = x_i^T(X^TX)^{-1} x_i \). High leverage points are identified when the leverage value exceeds the threshold: 
+\[
+\text{Leverage Threshold} = \frac{2(p+1)}{n}
+\]
+where \( p \) is the number of predictors and \( n \) is the number of observations.  
+
+In this model, the high leverage points are:
+
+```{r, echo = FALSE}
+r <- length(coef(model)) #equal to p + 1
+threshold <- (2 * r) / n
+h_values <- hatvalues(model)
+high <- dataset$Country_name[which(h_values > threshold)]
+pander(high, caption = "High leverage points", row.names = FALSE)
+```
+
+### 4.5.3) Influential Points
+
+An \textbf{influential point} is a data point whose removal would significantly alter the fitted model. Unlike outliers, influential points impact the estimated regression coefficients and can distort the overall model interpretation. One of the most commonly used measures for detecting influential observations is \textbf{Cook's Distance}, which quantifies the influence of each data point on the estimated regression coefficients.  
+It is defined as:  
+\[
+D_i = \frac{(\hat{y} - \hat{y}_{(i)})^T (\hat{y} - \hat{y}_{(i)})}{p \hat{\sigma}^2} = \frac{r_i^2}{p} \frac{h_i}{1-h_i}
+\]
+where \( r_i \) represents the standardized residual, \( h_i \) is the leverage of the observation and \( p \) is the number of predictors. 
+The rule of thumb to detect influential points is: \( 0.5 \leq D_i < 1 \) indicates that the observation is moderately influential; while \( D_i \geq 1 \) suggests that the observation is highly influential and could significantly affect the regression estimates.
+
+```{r, echo = FALSE}
+cook <- cooks.distance(model)
+max_value <- cook[which.max(cook)]
+max_country <- dataset$Country_name[which.max(cook)]  
+max_cook_df <- data.frame(
+  Cook_Distance = max_value,
+  Country = max_country
+)
+pander(max_cook_df, caption = "Max Cook Distance", row.names = FALSE)
+```
+
+Since the above value is less than 0.5, it can be said that no observation can be considered an influential point.
+
+# 5) Best Model obtained
+
+The summary of the best model obtained is the following:
+
+```{r, echo = FALSE}
+summary(model)
+```
+
+## 5.1) Intepretation of the Parameters
+
+To facilitate interpretation, a table is provided showing the corresponding means of the predictors, which can be used for better understanding after centering.
+
+```{r, echo = FALSE}
+selected_vars <- c("Renew_energy", "Pop_tot", "Urban_pop", "Industry_GDP", "Agri_land", 
+                   "Life_expectacy", "Fire_spots")
+mean_values <- colMeans(dataset_orig[selected_vars], na.rm = TRUE)
+mean_df <- data.frame(Mean = mean_values)
+mean_df_transposed <- t(mean_df)
+pander(mean_df_transposed, caption = "Mean of predictors before centering", row.names = FALSE)
+```
+
+The interpretation of parameters is as follows:    
+
+\begin{itemize}   
+    \item \( \beta_0 = 2.277 \iff e^{2.277} \approx 9.75 \):    
+    This represents the expected CO\textsubscript{2} emissions (in megatons) for a typical country, where all predictors are at their mean value.    
+    \item \( \beta_1 = -0.01161\):  
+    A \textbf{1 percentage point} increase in renewable energy consumption is associated with approximately a \textbf{1.16\% decrease} in CO\textsubscript{2} emissions. This aligns with the expectation that a higher share of renewable energy reduces reliance on fossil fuels, leading to lower emissions.    
+    \item \( \beta_2 = 1.733 \times 10^{-8} \).    
+    To better interpret the result, we consider an increase in population of \textbf{1 million}, which corresponds to a \textbf{1.73\% increase} in CO\textsubscript{2} emissions. This implies that countries with larger populations tend to emit more CO\textsubscript{2}, likely due to greater energy demand, transportation, and industrial production.    
+    \item \( \beta_3 = -1.075 \times 10^{-17} \): The quadratic term indicates that the effect of population on CO\(_2\) emissions is not linear, but the impact is extremely small, as \( \beta_3 \) is very close to zero. Therefore, the quadratic effect of population is negligible compared to the much more significant linear term \( \beta_2 \).   
+    \item \( \beta_4 = 0.01678\): An increase in the urban population by \textbf{1 percentage point} leads to a \textbf{1.68\% increase} in CO\textsubscript{2} emissions. Cities tend to generate higher emissions due to industrial activity, energy consumption and higher vehicle density. For example, if a country’s urban population rises from 60\% to 70\%, CO\textsubscript{2} emissions are expected to increase by approximately \( 10 \times 1.68\% = 16.8\% \).
+    \item \( \beta_5 = 0.06486\): A \textbf{1 percentage point} increase in the share of GDP from industry leads to a \textbf{6.5\% increase} in CO\textsubscript{2} emissions. This confirms that industrialization is a major driver of CO\textsubscript{2} emissions. So, if a country increases the industrial share of GDP from 30\% to 40\%, its CO\textsubscript{2} emissions would rise by: \( 10 \times 6.5\% = 65\% \).    
+    \item \( \beta_6 = -0.001675\): The quadratic term suggests that the relationship between \( \text{Ind\_GDP} \) and CO\(_2\) emissions is \textbf{non-linear}. Initially, as \( \text{Ind\_GDP} \) increases, CO\(_2\) emissions also rise due to growing industrial activity. However, after a certain point, the effect of industrial GDP on CO\(_2\) emissions becomes negative, indicating that further industrial growth leads to reduced emissions. This shift is likely due to the adoption of more efficient technologies and environmental policies in highly industrialized countries.  
+To determine the point at which the effect changes sign, we computed the \emph{derivative} of the regression function with respect to \( \text{Ind\_GDP} \). The derivative of \( \beta_5 \cdot x_{\text{Ind\_GDP}} + \beta_6 \cdot x_{\text{Ind\_GDP}}^2 \) was set equal to zero to find the turning point:
+\[
+\frac{\partial}{\partial x_{\text{Ind\_GDP}}} \left( \beta_5 \cdot x_{\text{Ind\_GDP}} + \beta_6 \cdot x_{\text{Ind\_GDP}}^2 \right) = 0
+\]
+This leads to the equation:
+\[
+\beta_5 + 2 \cdot \beta_6 \cdot x_{\text{Ind\_GDP}} = 0
+\]
+Solving for \( \text{Ind\_GDP} \), we find that the \emph{turning point} occurs at approximately 19.36\%. This means that when the industrial share of GDP exceeds 19.36\%, the effect of further industrialization on CO\(_2\) emissions becomes negative. Before this point, industrialization increases emissions, while beyond this threshold, the effect is reversed, and emissions decrease.  
+Thus, countries with an industrial GDP share greater than 19.36\% may experience a reduction in emissions as industrialization progresses, typically reflecting more economically developed nations. This decrease is likely due to improvements in efficiency, the adoption of sustainable practices, and the implementation of environmental policies. In contrast, emerging economies experience significant increases in emissions with industrialization, while in more advanced economies, the marginal impact of industry on emissions is lower, often due to better infrastructure and emission reduction policies.  
+    \item \( \beta_7 = 0.01678 \): A \textbf{1 percentage point} increase in agricultural land leads to a \textbf{1.68\% increase} in CO\textsubscript{2} emissions.  This is likely due to deforestation and the intensive use of fertilizers, both of which contribute to the release of greenhouse gases such as methane.
+    \item \( \beta_8 = 0.1176 \): An increase of \textbf{1 year} in life expectancy is associated with a \textbf{11.76\% increase} in CO\textsubscript{2} emissions. This suggests that countries with longer life expectancy are often more economically developed, probably leading to higher energy consumption, industrial activity and transportation needs.
+    \item \( \beta_9 = 0.2883\): A \textbf{1 unit} increase in \textbf{Fire spots} is associated with a \textbf{28.83\% increase} in CO\textsubscript{2} emissions. This highlights the significant impact of forest fires on atmospheric CO\textsubscript{2} levels, as large-scale burning releases substantial amounts of carbon stored in vegetation.
+\end{itemize}
+
+## 5.2) Uncertainties
+
+The \textbf{standard errors} of the coefficients are relatively small, suggesting precise estimates. The \textbf{Residual Standard Error (RSE)} of 0.9407 is also small in relation to the response variable's scale, indicating a good fit of the model.  
+
+Additionally, the \textbf{confidence intervals}, obtained using the confint() function, show that all variables are significant since their intervals do not include zero. This indicates that their effect on the dependent variable is statistically different from zero at the 95% confidence level. Furthermore, the confidence intervals are consistent with the sign of the relationship between each predictor and the response variable, aligning with the results of the corresponding t-tests, which will be performed subsequently.
+
+## 5.3) t-Test
+
+To assess whether a predictor significantly affects the dependent variable, we perform a \textbf{t-Test}, testing if a coefficient \( \hat{\beta}_j \) is different from zero. The hypotheses are:  
+\[
+\left\{
+\begin{array}{ll}
+H_0: \beta_j = 0 \\
+H_1: \beta_j \neq 0
+\end{array}
+\right.
+\]  
+To reject \( H_0 \), we examine the \textbf{p-value} in the `summary()` output. If \( p < 0.05 \), we reject \( H_0 \), indicating that \( \hat{\beta}_j \) is \textbf{statistically significant}. If \( p \geq 0.05 \), we fail to reject \( H_0 \), suggesting that \( \hat{\beta}_j \) is \textbf{not significant}.
+Since all p-values in our model are below 0.05, all predictors are highly statistically significant, supporting the conclusion that they meaningfully affect the response.
+
+## 5.4) Comparing Models
+
+I compared two models to evaluate the impact of adding quadratic terms for specific predictors, corresponding to the coefficients \( \beta_3 \) and \( \beta_6 \), using an \textbf{ANOVA test}. So the \emph{narrower} model will be: 
+$$
+\begin{aligned}
+\log(Y) &= \beta_0 + \beta_1 x_{\text{Ren\_en}} + \beta_2 x_{\text{Pop\_tot}} + \beta_3 x_{\text{Urb\_pop}} + \beta_4 x_{\text{Ind\_GDP}}
++ \beta_5 x_{\text{Agri\_land}} + \beta_6 x_{\text{Life\_exp}} + \beta_7 \log(x_{\text{Fire\_spots}}) + \epsilon
+\end{aligned}
+$$
+The hypothesis test is defined as follows:
+\[
+\left\{
+\begin{array}{ll}
+H_0: \beta_3 = 0 , \quad \beta_6 = 0 \\
+H_1: \beta_3 \neq 0, \quad \beta_6 \neq 0
+\end{array}
+\right.
+\]
+
+A **small p-value** from the ANOVA test leads to rejecting \( H_0 \), indicating that the quadratic terms significantly improve the model. Conversely, a **large p-value** suggests that the simpler model is preferable.
+
+```{r, echo = FALSE}
+model0 <- lm(CO2_emission ~ Pop_tot + Urb_pop + Ind_GDP + 
+              Agri_land + Life_exp, data = dataset)
+anova(model0, model)
+```
+
+The ANOVA test results show that adding the quadratic terms for \emph{Pop tot} and \emph{Industry GDP} significantly improves the model. With an exceptionally high F-statistic and a small p-value, well below the 0.05 threshold, we reject the null hypothesis. This strong evidence confirms that the quadratic terms significantly contribute to explaining CO\textsubscript{2} emissions. Consequently, the model with quadratic terms is preferred over the simpler linear model.
+
+## 5.5) Goodness of fit
+
+To assess how well our model explains the variability in the dependent variable, we use the \textbf{coefficient of determination} \( R^2 \), which measures the proportion of variance in \( Y \) explained by the predictors:  
+\[
+R^2 = \frac{\text{SS}_{\text{Reg}}}{\text{SS}_{YY}} = 1 - \frac{\text{RSS}}{\text{SS}_{YY}}
+\] 
+where \( \text{RSS} \) is the residual sum of squares and \( \text{SS}_{YY} \) is the total variance in \( Y \). Since \( R^2 \) increases with more predictors, we also consider the \textbf{adjusted \( R^2 \)}, which accounts for model complexity by penalizing unnecessary variables:  
+\[
+R^2_{\text{adj}} = 1 - \left( \frac{n-1}{n-p-1} \right) ( 1 - R^2 )
+\]  
+In our model, \( R^2 = 0.8408 \) and \( R^2_{\text{adj}} = 0.832 \), meaning that **84.04%** of the variability in CO\textsubscript{2} emissions is explained, with the adjusted value confirming that the selected predictors are meaningful without overfitting.
+
+# 6) Prediction
+
+Suppose now that we have a new observation, representing a new country, with a population of **35,765,987**, an urban population percentage of **65%**, an industrial GDP share of **48%**, an agricultural land percentage of **35%**, a life expectancy of **76 years** and fire spots equal to **650**.
+
+Since our model was trained using centered predictors, we must apply the same transformation to ensure consistency. This means subtracting the mean of each variable from the original dataset before making predictions.
+
+```{r, echo = FALSE}
+colnames(dataset_original)[colnames(dataset_original) == "Life_expectancy"] <- "Life_exp"
+colnames(dataset_original)[colnames(dataset_original) == "Unemployment"] <- "Unempl"
+colnames(dataset_original)[colnames(dataset_original) == "Industry_GDP"] <- "Ind_GDP"
+colnames(dataset_original)[colnames(dataset_original) == "Urban_pop"] <- "Urb_pop"
+colnames(dataset_original)[colnames(dataset_original) == "Renew_energy"] <- "Ren_en"
+means <- colMeans(dataset_original[, c("Ren_en" ,"Pop_tot", "Urb_pop", "Ind_GDP", "Agri_land", "Life_exp", "Fire_spots")], na.rm = TRUE)
+newdata <- data.frame("Ren_en" = 40 - means["Ren_en"], "Pop_tot" = 35765987 - means["Pop_tot"],
+                      `(Pop_tot^2)` = (35765987 - means["Pop_tot"])^2, 
+                      "Urb_pop" = 65 - means["Urb_pop"], "Ind_GDP" = 48 - means["Ind_GDP"],
+                      `I(Ind_GDP^2)` = (48 - means["Ind_GDP"])^2,
+                      "Agri_land" = 35 - means["Agri_land"], "Life_exp" = 76 - means["Life_exp"],  
+                      "Fire_spots" = log(650 - means["Fire_spots"] + abs(min(dataset$Fire_spots)) + 1)
+)
+```
+
+```{r}
+prediction <- predict(model, newdata = newdata, interval = "prediction", level = 0.95)
+```
+
+```{r, echo = FALSE}
+pander(prediction, caption = "Prediction", row.names = FALSE)
+```
+
+The predicted value and its confidence interval are based on input values that have been adjusted by subtracting their mean, as our model was trained with centered predictors. The means were taken from the original dataset before the variables were centered. This ensures that the predictions are consistent with the transformation applied during model training. The estimated CO\textsubscript{2} emissions for the selected values is **11.2**, with a **95\% prediction interval** ranging from **8.781 to 13.63**.
+
+# 7) Simulate n data points
+
+The scatterplot compares the observed CO\textsubscript{2} emissions (x-axis) with the \textbf{simulated response} values (y-axis), which are generated using the estimated model parameters. Each point represents an observation, while the red dashed line represents the ideal relationship 1:1, where the simulated values perfectly match the observed ones.
+
+```{r}
+set.seed(123)
+X <- model.matrix(model)
+beta_hat <- coef(model)
+sigma_hat <- summary(model)$sigma
+Y_sim <- X %*% beta_hat + rnorm(n, mean = 0, sd = sigma_hat)
+```
+
+```{r, echo = FALSE, fig.width = 4.5, fig.height = 2.5, fig.align="center", fig.pos="H", fig.cap="Scatterplot of Y obs and Y sim"}
+par(mfrow = c(1, 1), mar = c(4, 4, 1, 1), oma = c(0, 0, 0, 0))  
+plot(dataset$CO2_emission, Y_sim,
+     xlab = "Observed response", cex.axis = 0.8, cex.lab = 0.8,
+     ylab = "Simulated response", pch = 18)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+```
+
+The results suggest that the simulated responses align reasonably well with the observed values, indicating that the model captures the overall trend in the data. However, deviations from the red line suggest that some variability in CO\textsubscript{2} emissions is not fully explained. This may be due to omitted relevant variables or violations of model assumptions, such as correlated errors.
